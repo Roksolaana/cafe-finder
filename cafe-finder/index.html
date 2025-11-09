@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cafe Finder — знайди каву поруч</title>
+
+  <!-- Inter -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Lucide (іконки) -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo">
+        <i data-lucide="coffee" class="logo-icon"></i>
+        <span class="logo-text">Cafe Finder</span>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-btn active" data-tab="map"><i data-lucide="map-pin"></i> Карта</button>
+        <button class="nav-btn" data-tab="explore"><i data-lucide="search"></i> Дослідити</button>
+        <button class="nav-btn" data-tab="reviews"><i data-lucide="star"></i> Відгуки</button>
+        <button class="nav-btn" data-tab="favorites"><i data-lucide="heart"></i> Улюблені</button>
+        <button class="nav-btn" data-tab="profile"><i data-lucide="user"></i> Профіль</button>
+      </nav>
+    </header>
+
+    <!-- Main -->
+    <main id="root">
+      <!-- таби відмальовує script.js -->
+    </main>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">💖 Додано в улюблені</div>
+
+  <!-- Hammer.js для свайпів (не обов'язково, але приємно) -->
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="script.js"></script>
+
+  <!-- Google Maps + Places: встав свій ключ замість YOUR_API_KEY -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCb9cRlGECUzW0GDgWDWH-bqz9Qqr-IsLA&libraries=places&callback=CafeApp_init" async defer></script>
+  <script>lucide.createIcons();</script>
+</body>
+</html>
