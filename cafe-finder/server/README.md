@@ -33,8 +33,10 @@ mysql -u your_db_user -p your_db_name < schema.sql
 Реєстрація нового користувача
 ```json
 {
-  "name": "Іван",
-  "email": "ivan@example.com",
+  "name": "Ім'я",
+  "surname": "Прізвище",
+  "nickname": "користувач",
+  "email": "user@example.com",
   "password": "password123"
 }
 ```
@@ -43,7 +45,7 @@ mysql -u your_db_user -p your_db_name < schema.sql
 Вхід користувача
 ```json
 {
-  "email": "ivan@example.com",
+  "email": "user@example.com",
   "password": "password123"
 }
 ```
@@ -99,6 +101,7 @@ node server.js
 ```
 
 Сервер запуститься на `http://localhost:3001`
+
 
 
 

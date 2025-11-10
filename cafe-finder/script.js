@@ -6,6 +6,7 @@ let state = {
   placeDetails: {},   // кеш деталей місць (place_id -> details)
   favorites: JSON.parse(localStorage.getItem('favorites') || '[]'),
   currentIndex: 0,    // індекс картки у вкладці "Карта"
+  placesToShow: 20,   // кількість закладів для показу (пагінація)
   map: null,
   markers: [],
   userMarker: null,
@@ -242,6 +243,13 @@ function leftPaneHTML(){
   <div style="max-width:600px;margin:0 auto">
     <h1 class="h1">Кав'ярні поруч</h1>
     <p class="p-lead">Знайдіть ідеальне місце для кави</p>
+    
+    ${c ? `
+    <div class="swipe-hint" style="background:rgba(115,75,52,0.1);padding:12px 16px;border-radius:12px;margin-bottom:24px;font-size:14px;color:var(--accent);display:flex;align-items:center;gap:8px">
+      <i data-lucide="info" style="width:18px;height:18px"></i>
+      <span><strong>Підказка:</strong> Свайпніть вправо → додати в улюблені, вліво → пропустити</span>
+    </div>
+    ` : ''}
 
     ${state.errorMessage ? `
     <div class="empty">
@@ -260,15 +268,21 @@ function leftPaneHTML(){
           <div class="rating"><i data-lucide="star" style="width:16px;height:16px"></i><span style="font-weight:600">${fmtRating(c.rating)}</span></div>
         </div>
         <div class="meta"><i data-lucide="map-pin"></i><span>${c.vicinity || c.formatted_address || '—'}</span></div>
+        ${c.distance !== undefined ? `<div class="meta"><i data-lucide="navigation"></i><span>${c.distance < 1 ? Math.round(c.distance * 1000) + ' м' : c.distance.toFixed(1) + ' км'} від вас</span></div>` : ''}
         <div class="meta"><i data-lucide="clock"></i><span>${getHoursStatus(c)}</span></div>
       </div>
     </div>
 
     <div class="actions">
-      <button class="btn btn-outline" id="route-btn"><i data-lucide="navigation"></i> Маршрут</button>
-      <button class="btn btn-pill" id="learn-more-btn"><i data-lucide="arrow-right"></i> Дізнатись більше</button>
+      <button class="btn btn-outline" id="route-btn" title="Побудувати маршрут до цієї кав'ярні"><i data-lucide="navigation"></i> Маршрут</button>
+      <button class="btn btn-pill" id="learn-more-btn" title="Переглянути детальну інформацію про заклад"><i data-lucide="arrow-right"></i> Дізнатись більше</button>
     </div>
-    <p class="bottom-note">Показано ${idx} кав'ярень поруч</p>
+    <p class="bottom-note">Показано ${idx} з ${state.placesRaw.length} кав'ярень (сортування: рейтинг + відстань)</p>
+    ${state.placesRaw.length > state.placesToShow ? `
+    <button class="btn btn-outline" id="load-more-btn" style="width:100%;margin-top:16px" title="Завантажити наступні 20 закладів">
+      <i data-lucide="arrow-down"></i> Завантажити ще (${state.placesRaw.length - state.placesToShow} залишилось)
+    </button>
+    ` : ''}
     ` : emptyAllSeenHTML() }
   </div>`;
 }
@@ -282,9 +296,9 @@ function mapTabHTML(){
 
     <div class="right-pane">
       <div class="map-controls">
-        <button class="ctrl" id="recenter"><i data-lucide="send"></i></button>
-        <button class="ctrl" id="zoom-in"><i data-lucide="plus"></i></button>
-        <button class="ctrl" id="zoom-out"><i data-lucide="minus"></i></button>
+        <button class="ctrl" id="recenter" title="Повернути карту до вашої локації"><i data-lucide="send"></i></button>
+        <button class="ctrl" id="zoom-in" title="Збільшити масштаб карти"><i data-lucide="plus"></i></button>
+        <button class="ctrl" id="zoom-out" title="Зменшити масштаб карти"><i data-lucide="minus"></i></button>
       </div>
       <div id="map"></div>
     </div>
@@ -329,8 +343,20 @@ function afterMapTabMount(){
     hm.on('panmove',e=>{dx=e.deltaX; card.style.transform = `translateX(${dx}px) rotate(${dx/20}deg)`;});
     hm.on('panend',()=>{
       card.style.transition = 'transform .25s';
-      if(dx>100){ $('#save-btn')?.click(); }
-      else if(dx<-100){ $('#skip-btn')?.click(); }
+      if(dx>100){ 
+        // Свайп вправо - додати в улюблені
+        const p = currentPlace();
+        if(p) {
+          addToFavorites(p);
+          showToast('💖 Додано в улюблені');
+          // Перехід до наступного закладу
+          nextPlace();
+        }
+      }
+      else if(dx<-100){ 
+        // Свайп вліво - пропустити (перехід до наступного)
+        nextPlace();
+      }
       card.style.transform = 'translateX(0) rotate(0deg)';
       setTimeout(()=>card.style.transition='',250);
     });
@@ -343,6 +369,22 @@ function afterMapTabMount(){
   $('#recenter')?.addEventListener('click', ()=> state.map && state.userPos && state.map.setCenter(state.userPos));
   $('#zoom-in')?.addEventListener('click', ()=> state.map && state.map.setZoom(state.map.getZoom()+1));
   $('#zoom-out')?.addEventListener('click', ()=> state.map && state.map.setZoom(state.map.getZoom()-1));
+  
+  // Кнопка "Завантажити ще"
+  const loadMoreBtn = $('#load-more-btn');
+  if(loadMoreBtn) {
+    loadMoreBtn.addEventListener('click', () => {
+      state.placesToShow += 20;
+      state.places = state.placesRaw.slice(0, state.placesToShow);
+      drawPlaceMarkers(state.places);
+      // Оновлюємо тільки ліву панель
+      const leftPane = $('.left-pane');
+      if(leftPane) {
+        leftPane.innerHTML = leftPaneHTML();
+        afterMapTabMount();
+      }
+    });
+  }
 }
 
 // ====== TAB: EXPLORE (grid of places) ======
@@ -372,11 +414,6 @@ function filtersHTML() {
       <!-- Фільтри -->
       <div class="filters-grid">
         <div class="filter-group">
-          <label class="filter-label">Пошук</label>
-          <input type="text" class="filter-input" id="filter-keyword" placeholder="Назва або адреса..." value="${state.filters.keyword}">
-        </div>
-        
-        <div class="filter-group">
           <label class="filter-label">Радіус</label>
           <input type="range" class="filter-range" id="filter-radius" min="500" max="5000" step="500" value="${state.filters.radius}">
           <span class="filter-value" id="radius-value">${Math.round(state.filters.radius / 1000 * 10) / 10} км</span>
@@ -384,7 +421,7 @@ function filtersHTML() {
         
         <div class="filter-group">
           <label class="filter-label">Мінімальний рейтинг</label>
-          <input type="range" class="filter-range" id="filter-rating" min="0" max="5" step="0.1" value="${state.filters.minRating}">
+          <input type="range" class="filter-range" id="filter-rating" min="0" max="5" step="any" value="${state.filters.minRating}">
           <span class="filter-value" id="rating-value">${state.filters.minRating > 0 ? state.filters.minRating.toFixed(1) : 'Будь-який'}</span>
         </div>
         
@@ -398,12 +435,18 @@ function filtersHTML() {
         <div class="filter-group">
           <label class="filter-label">Сортування</label>
           <select class="filter-select" id="filter-sortBy">
-            <option value="distance" ${state.filters.sortBy === 'distance' ? 'selected' : ''}>За відстанню</option>
+            <option value="distance" ${state.filters.sortBy === 'distance' ? 'selected' : ''}>Рейтинг + відстань (за замовчуванням)</option>
             <option value="rating" ${state.filters.sortBy === 'rating' ? 'selected' : ''}>За рейтингом</option>
             <option value="reviews" ${state.filters.sortBy === 'reviews' ? 'selected' : ''}>За кількістю відгуків</option>
-            <option value="smart" ${state.filters.sortBy === 'smart' ? 'selected' : ''}>Розумне</option>
           </select>
         </div>
+      </div>
+      
+      <!-- Кнопка застосування фільтрів -->
+      <div style="margin-top:24px;display:flex;justify-content:center">
+        <button class="btn btn-pill" id="apply-filters-btn" style="min-width:200px">
+          <i data-lucide="check"></i> Застосувати фільтри
+        </button>
       </div>
     </div>
   `;
@@ -423,6 +466,13 @@ function exploreTabHTML(){
         <p class="sub">Знайдіть ідеальне місце для кави</p>
       </div>
     </div>
+    
+    ${state.places.length > 0 ? `
+    <div style="background:rgba(115,75,52,0.1);padding:12px 16px;border-radius:12px;margin-bottom:24px;font-size:14px;color:var(--accent);display:flex;align-items:center;gap:8px">
+      <i data-lucide="info" style="width:18px;height:18px"></i>
+      <span><strong>Підказка:</strong> Наведіть курсор на картку або натисніть для перегляду додаткових опцій</span>
+    </div>
+    ` : ''}
 
     ${filtersHTML()}
 
@@ -430,7 +480,7 @@ function exploreTabHTML(){
       ${state.places.length > 0 ? state.places.map(p=>`
         <div class="tile" data-id="${p.place_id}">
           <div class="tile-img" style="background-image:url('${placePhoto(p, 800)}')">
-            <button class="tile-fav-btn" data-id="${p.place_id}" onclick="event.stopPropagation()">
+            <button class="tile-fav-btn" data-id="${p.place_id}" onclick="event.stopPropagation()" title="Додати в улюблені">
               <i data-lucide="heart" style="width:20px;height:20px"></i>
             </button>
             <div class="tile-overlay" data-place-id="${p.place_id}">
@@ -456,9 +506,10 @@ function exploreTabHTML(){
           <div class="tile-body">
             <div class="row">
               <h3 class="tile-title">${p.name}</h3>
-              <div class="rating"><i data-lucide="star" style="width:16px;height:16px"></i> <span style="font-weight:600">${fmtRating(p.rating)}</span></div>
+              <div class="rating" title="Рейтинг закладу"><i data-lucide="star" style="width:16px;height:16px"></i> <span style="font-weight:600">${fmtRating(p.rating)}</span></div>
             </div>
             <div class="meta"><i data-lucide="map-pin"></i><span>${p.vicinity || p.formatted_address || '—'}</span></div>
+            ${p.distance !== undefined ? `<div class="meta"><i data-lucide="navigation"></i><span>${p.distance < 1 ? Math.round(p.distance * 1000) + ' м' : p.distance.toFixed(1) + ' км'} від вас</span></div>` : ''}
             <div class="meta"><i data-lucide="clock"></i><span>${getHoursStatus(p)}</span></div>
           </div>
         </div>`).join('') : `
@@ -480,28 +531,25 @@ function bindFilters() {
     });
   });
 
-  // Пошук (з дебаунсом)
-  const keywordInput = $('#filter-keyword');
-  if(keywordInput) {
-    const debouncedKeyword = debounce(() => {
-      state.filters.keyword = keywordInput.value;
-      saveFilters();
-      applyFilters();
-    }, 400);
-    keywordInput.addEventListener('input', debouncedKeyword);
-  }
-
   // Радіус
   const radiusInput = $('#filter-radius');
   const radiusValue = $('#radius-value');
   if(radiusInput && radiusValue) {
+    // Оновлюємо градієнт треку при зміні значення
+    const updateRadiusTrack = () => {
+      const value = parseInt(radiusInput.value);
+      const min = parseInt(radiusInput.min) || 500;
+      const max = parseInt(radiusInput.max) || 5000;
+      const percent = ((value - min) / (max - min)) * 100;
+      radiusInput.style.setProperty('--progress', `${percent}%`);
+    };
+    updateRadiusTrack();
+    
     radiusInput.addEventListener('input', () => {
-      state.filters.radius = parseInt(radiusInput.value);
-      radiusValue.textContent = `${Math.round(state.filters.radius / 1000 * 10) / 10} км`;
-      saveFilters();
-    });
-    radiusInput.addEventListener('change', () => {
-      searchNearbyWithFilters();
+      // Тільки оновлюємо відображення, не застосовуємо фільтри
+      const value = parseInt(radiusInput.value);
+      radiusValue.textContent = `${Math.round(value / 1000 * 10) / 10} км`;
+      updateRadiusTrack();
     });
   }
 
@@ -509,31 +557,77 @@ function bindFilters() {
   const ratingInput = $('#filter-rating');
   const ratingValue = $('#rating-value');
   if(ratingInput && ratingValue) {
+    // Оновлюємо градієнт треку при зміні значення
+    const updateRatingTrack = () => {
+      const value = parseFloat(ratingInput.value);
+      const min = parseFloat(ratingInput.min) || 0;
+      const max = parseFloat(ratingInput.max) || 5;
+      const percent = ((value - min) / (max - min)) * 100;
+      ratingInput.style.setProperty('--progress', `${percent}%`);
+    };
+    updateRatingTrack();
+    
     ratingInput.addEventListener('input', () => {
-      state.filters.minRating = parseFloat(ratingInput.value);
-      ratingValue.textContent = state.filters.minRating > 0 ? state.filters.minRating.toFixed(1) : 'Будь-який';
-      saveFilters();
-      applyFilters();
+      // Тільки оновлюємо відображення, не застосовуємо фільтри
+      const value = parseFloat(ratingInput.value);
+      ratingValue.textContent = value > 0 ? value.toFixed(1) : 'Будь-який';
+      updateRatingTrack();
     });
   }
 
   // Відкрито зараз
   const openNowCheckbox = $('#filter-openNow');
   if(openNowCheckbox) {
-    openNowCheckbox.addEventListener('change', () => {
-      state.filters.openNow = openNowCheckbox.checked;
-      saveFilters();
-      applyFilters();
-    });
+    // Не застосовуємо одразу, тільки при натисканні кнопки
   }
 
   // Сортування
   const sortSelect = $('#filter-sortBy');
   if(sortSelect) {
-    sortSelect.addEventListener('change', () => {
-      state.filters.sortBy = sortSelect.value;
+    // Не застосовуємо одразу, тільки при натисканні кнопки
+  }
+
+  // Кнопка застосування фільтрів
+  const applyBtn = $('#apply-filters-btn');
+  if(applyBtn) {
+    applyBtn.addEventListener('click', () => {
+      // Збираємо всі значення з полів
+      if(radiusInput) {
+        state.filters.radius = parseInt(radiusInput.value);
+      }
+      if(ratingInput) {
+        state.filters.minRating = parseFloat(ratingInput.value);
+      }
+      if(openNowCheckbox) {
+        state.filters.openNow = openNowCheckbox.checked;
+      }
+      if(sortSelect) {
+        state.filters.sortBy = sortSelect.value;
+      }
+      
       saveFilters();
-      applyFilters();
+      
+      // Якщо змінився радіус, робимо новий пошук
+      if(state.userPos && radiusInput) {
+        const newRadius = parseInt(radiusInput.value);
+        if(newRadius !== state.filters.radius) {
+          searchNearbyWithFilters();
+        } else {
+          applyFilters();
+        }
+      } else {
+        applyFilters();
+      }
+      
+      // Візуальний фідбек
+      applyBtn.innerHTML = '<i data-lucide="check"></i> Застосовано!';
+      applyBtn.style.background = 'var(--accent-2)';
+      lucide.createIcons();
+      setTimeout(() => {
+        applyBtn.innerHTML = '<i data-lucide="check"></i> Застосувати фільтри';
+        applyBtn.style.background = '';
+        lucide.createIcons();
+      }, 1500);
     });
   }
 }
@@ -585,9 +679,10 @@ function afterExploreMount(){
             <div class="tile-body">
               <div class="row">
                 <h3 class="tile-title">${p.name}</h3>
-                <div class="rating"><i data-lucide="star" style="width:16px;height:16px"></i> <span style="font-weight:600">${fmtRating(p.rating)}</span></div>
+                <div class="rating" title="Рейтинг закладу"><i data-lucide="star" style="width:16px;height:16px"></i> <span style="font-weight:600">${fmtRating(p.rating)}</span></div>
               </div>
               <div class="meta"><i data-lucide="map-pin"></i><span>${p.vicinity || p.formatted_address || '—'}</span></div>
+              ${p.distance !== undefined ? `<div class="meta"><i data-lucide="navigation"></i><span>${p.distance < 1 ? Math.round(p.distance * 1000) + ' м' : p.distance.toFixed(1) + ' км'} від вас</span></div>` : ''}
               <div class="meta"><i data-lucide="clock"></i><span>${getHoursStatus(p)}</span></div>
             </div>
           </div>`).join('') : `
@@ -607,17 +702,29 @@ function afterExploreMount(){
     }
   }
   
-  // Фокусування на потрібній плитці (якщо перейшли з "Карти")
+  // Фокусування на потрібній плитці (якщо перейшли з "Карти" або "Улюблених")
   if(state.focusedPlaceId) {
     setTimeout(() => {
       const tile = $(`[data-id="${state.focusedPlaceId}"]`);
       if(tile) {
+        // Скролимо до плитки
         tile.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Додаємо виділення
         tile.classList.add('focused');
-        setTimeout(() => tile.classList.remove('focused'), 2000);
+        // Після анімації залишаємо помітне виділення ще на 3 секунди
+        setTimeout(() => {
+          tile.classList.remove('focused');
+          // Додаємо постійне виділення
+          tile.style.border = '2px solid var(--accent)';
+          tile.style.boxShadow = '0 4px 16px rgba(115,75,52,.2)';
+          setTimeout(() => {
+            tile.style.border = '';
+            tile.style.boxShadow = '';
+          }, 3000);
+        }, 2000);
       }
       state.focusedPlaceId = null;
-    }, 100);
+    }, 300);
   }
   
   // кнопка сердечка -> додати в улюблені
@@ -658,6 +765,9 @@ function bindTileHandlers() {
         isHovered = true;
         overlay.classList.add('active');
         if(!detailsLoaded) {
+          // Спочатку налаштовуємо базові посилання для миттєвого відгуку
+          updateTileActionsBasic(placeId, place);
+          // Потім завантажуємо деталі та оновлюємо
           fetchPlaceDetails(placeId, (details) => {
             if(details) {
               updateTileActions(placeId, place, details);
@@ -687,6 +797,9 @@ function bindTileHandlers() {
               // Одиночний тап - відкрити оверлей
               overlay.classList.toggle('active');
               if(!detailsLoaded) {
+                // Спочатку налаштовуємо базові посилання для миттєвого відгуку
+                updateTileActionsBasic(placeId, place);
+                // Потім завантажуємо деталі та оновлюємо
                 fetchPlaceDetails(placeId, (details) => {
                   if(details) {
                     updateTileActions(placeId, place, details);
@@ -708,7 +821,7 @@ function bindTileHandlers() {
 
   // Обробка дій в оверлеї
   $$('.tile-action-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
       const action = btn.dataset.action;
@@ -716,9 +829,86 @@ function bindTileHandlers() {
       const place = state.places.find(p => p.place_id === placeId);
       if(!place) return;
 
-      handleTileAction(action, place);
+      // Якщо посилання вже встановлене і це не Google пошук, просто переходимо
+      if(btn.href && btn.href !== '#' && btn.href !== window.location.href && !btn.href.includes('google.com/search')) {
+        window.open(btn.href, '_blank');
+        return;
+      }
+
+      // Для "Сайт" та "Меню" спочатку завантажуємо деталі, якщо їх ще немає
+      if((action === 'website' || action === 'menu') && !place.website && !state.placeDetails[placeId]) {
+        // Показуємо індикатор завантаження
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i data-lucide="loader-2" style="width:16px;height:16px"></i> Завантаження...';
+        btn.disabled = true;
+        lucide.createIcons();
+        
+        // Завантажуємо деталі
+        await new Promise((resolve) => {
+          fetchPlaceDetails(placeId, (details) => {
+            if(details) {
+              updateTileActions(placeId, place, details);
+              // Оновлюємо посилання на кнопці
+              const updatedBtn = $(`.tile-action-btn[data-action="${action}"][data-place-id="${placeId}"]`);
+              if(updatedBtn && updatedBtn.href && updatedBtn.href !== '#' && !updatedBtn.href.includes('google.com/search')) {
+                window.open(updatedBtn.href, '_blank');
+              } else {
+                // Якщо сайту немає, використовуємо handleTileAction
+                handleTileAction(action, place, updatedBtn || btn);
+              }
+            } else {
+              // Якщо деталі не завантажилися, використовуємо базову логіку
+              handleTileAction(action, place, btn);
+            }
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            lucide.createIcons();
+            resolve();
+          });
+        });
+        return;
+      }
+
+      // Інакше обробляємо дію
+      handleTileAction(action, place, btn);
     });
   });
+}
+
+// Базова настройка посилань без деталей
+function updateTileActionsBasic(placeId, place) {
+  const overlay = $(`.tile-overlay[data-place-id="${placeId}"]`);
+  if(!overlay) return;
+
+  const websiteBtn = overlay.querySelector('[data-action="website"]');
+  const menuBtn = overlay.querySelector('[data-action="menu"]');
+  const routeBtn = overlay.querySelector('[data-action="route"]');
+  const mapsBtn = overlay.querySelector('[data-action="maps"]');
+
+  // Сайт
+  if(websiteBtn) {
+    websiteBtn.href = `https://www.google.com/search?q=${encodeURIComponent(place.name)}`;
+    websiteBtn.target = '_blank';
+  }
+
+  // Меню
+  if(menuBtn) {
+    menuBtn.href = `https://www.google.com/search?q=${encodeURIComponent(place.name + ' menu')}`;
+    menuBtn.target = '_blank';
+  }
+
+  // Маршрут
+  if(routeBtn && place.geometry) {
+    const dest = place.geometry.location;
+    routeBtn.href = `https://www.google.com/maps/dir/?api=1&origin=${state.userPos.lat},${state.userPos.lng}&destination=${dest.lat()},${dest.lng()}&travelmode=walking`;
+    routeBtn.target = '_blank';
+  }
+
+  // Google Maps
+  if(mapsBtn) {
+    mapsBtn.href = `https://www.google.com/maps/search/?api=1&query=place_id:${placeId}`;
+    mapsBtn.target = '_blank';
+  }
 }
 
 function updateTileActions(placeId, place, details) {
@@ -733,12 +923,15 @@ function updateTileActions(placeId, place, details) {
   const phoneBtn = overlay.querySelector('[data-action="phone"]');
 
   // Сайт
-  if(websiteBtn && details.website) {
-    websiteBtn.href = details.website;
+  if(websiteBtn) {
+    if(details.website) {
+      websiteBtn.href = details.website;
+    } else {
+      websiteBtn.href = `https://www.google.com/search?q=${encodeURIComponent(place.name)}`;
+    }
     websiteBtn.target = '_blank';
-  } else if(websiteBtn) {
-    websiteBtn.href = `https://www.google.com/search?q=${encodeURIComponent(place.name)}`;
-    websiteBtn.target = '_blank';
+    // Зберігаємо дані для швидкого доступу
+    place.website = details.website || null;
   }
 
   // Меню
@@ -762,6 +955,7 @@ function updateTileActions(placeId, place, details) {
   if(mapsBtn) {
     if(details.url) {
       mapsBtn.href = details.url;
+      place.url = details.url;
     } else {
       mapsBtn.href = `https://www.google.com/maps/search/?api=1&query=place_id:${placeId}`;
     }
@@ -775,16 +969,53 @@ function updateTileActions(placeId, place, details) {
   }
 }
 
-function handleTileAction(action, place) {
+function handleTileAction(action, place, btn) {
   switch(action) {
     case 'website':
+      // Сайт закладу - перевіряємо кеш деталей
+      const cachedWebsite = state.placeDetails[place.place_id];
+      if(cachedWebsite && cachedWebsite.data && cachedWebsite.data.website) {
+        window.open(cachedWebsite.data.website, '_blank');
+      } else if(place.website) {
+        window.open(place.website, '_blank');
+      } else {
+        // Якщо немає сайту, шукаємо в Google
+        window.open(`https://www.google.com/search?q=${encodeURIComponent(place.name)}`, '_blank');
+      }
+      break;
     case 'menu':
-    case 'maps':
+      // Меню закладу - перевіряємо кеш деталей
+      const cachedMenu = state.placeDetails[place.place_id];
+      if(cachedMenu && cachedMenu.data && cachedMenu.data.website) {
+        window.open(cachedMenu.data.website, '_blank');
+      } else if(place.website) {
+        window.open(place.website, '_blank');
+      } else {
+        window.open(`https://www.google.com/search?q=${encodeURIComponent(place.name + ' menu')}`, '_blank');
+      }
+      break;
     case 'route':
-      // Посилання вже налаштовані в updateTileActions
+      // Маршрут до закладу
+      if(place.geometry && place.geometry.location) {
+        const dest = place.geometry.location;
+        const url = `https://www.google.com/maps/dir/?api=1&origin=${state.userPos.lat},${state.userPos.lng}&destination=${dest.lat()},${dest.lng()}&travelmode=walking`;
+        window.open(url, '_blank');
+      }
+      break;
+    case 'maps':
+      // Відкрити в Google Maps
+      if(place.url) {
+        window.open(place.url, '_blank');
+      } else {
+        const url = `https://www.google.com/maps/search/?api=1&query=place_id:${place.place_id}`;
+        window.open(url, '_blank');
+      }
       break;
     case 'phone':
-      // Вже налаштовано як tel: посилання
+      // Телефон (вже налаштовано як tel: посилання)
+      if(btn.href && btn.href.startsWith('tel:')) {
+        window.location.href = btn.href;
+      }
       break;
   }
 }
@@ -843,16 +1074,16 @@ function authFormsHTML() {
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Ім'я</label>
-              <input type="text" class="form-input" id="register-name" placeholder="Іван">
+              <input type="text" class="form-input" id="register-name" placeholder="Ім'я">
             </div>
             <div class="form-group">
               <label class="form-label">Прізвище</label>
-              <input type="text" class="form-input" id="register-surname" placeholder="Іванов">
+              <input type="text" class="form-input" id="register-surname" placeholder="Прізвище">
             </div>
           </div>
           <div class="form-group">
             <label class="form-label">Нікнейм <span class="required">*</span></label>
-            <input type="text" class="form-input" id="register-nickname" required placeholder="ivan_user">
+            <input type="text" class="form-input" id="register-nickname" required placeholder="username">
             <div class="form-hint" id="nickname-hint"></div>
           </div>
           <div class="form-group">
@@ -905,16 +1136,16 @@ function profileViewHTML() {
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">Ім'я</label>
-                <input type="text" class="form-input" id="profile-name" value="${user.name || ''}" placeholder="Іван">
+                <input type="text" class="form-input" id="profile-name" value="${user.name || ''}" placeholder="Ім'я">
               </div>
               <div class="form-group">
                 <label class="form-label">Прізвище</label>
-                <input type="text" class="form-input" id="profile-surname" value="${user.surname || ''}" placeholder="Іванов">
+                <input type="text" class="form-input" id="profile-surname" value="${user.surname || ''}" placeholder="Прізвище">
               </div>
             </div>
             <div class="form-group">
               <label class="form-label">Нікнейм <span class="required">*</span></label>
-              <input type="text" class="form-input" id="profile-nickname" value="${user.nickname || ''}" required placeholder="ivan_user">
+              <input type="text" class="form-input" id="profile-nickname" value="${user.nickname || ''}" required placeholder="username">
               <div class="form-hint" id="profile-nickname-hint"></div>
             </div>
             <div class="form-group">
@@ -993,6 +1224,13 @@ function bindAuthTabs() {
         return;
       }
       
+      // Перевірка на англійські літери, цифри та підкреслення
+      if(!/^[a-zA-Z0-9_]+$/.test(nickname)) {
+        hint.textContent = 'Тільки англійські літери, цифри та _';
+        hint.style.color = '#e74c3c';
+        return;
+      }
+      
       const available = await checkNickname(nickname);
       if(available) {
         hint.textContent = '✓ Нікнейм доступний';
@@ -1018,6 +1256,13 @@ function bindProfileHandlers() {
       
       if(nickname.length < 3) {
         hint.textContent = '';
+        return;
+      }
+      
+      // Перевірка на англійські літери, цифри та підкреслення
+      if(!/^[a-zA-Z0-9_]+$/.test(nickname)) {
+        hint.textContent = 'Тільки англійські літери, цифри та _';
+        hint.style.color = '#e74c3c';
         return;
       }
       
@@ -1086,6 +1331,12 @@ window.handleRegister = async function(event) {
     return;
   }
   
+  // Перевірка на англійські літери, цифри та підкреслення
+  if(!/^[a-zA-Z0-9_]+$/.test(nickname)) {
+    if(errorEl) errorEl.textContent = 'Нікнейм має містити тільки англійські літери, цифри та _';
+    return;
+  }
+  
   if(password.length < 6) {
     if(errorEl) errorEl.textContent = 'Пароль має бути мінімум 6 символів';
     return;
@@ -1120,6 +1371,18 @@ window.handleProfileUpdate = async function(event) {
   const email = $('#profile-email').value.trim();
   
   if(errorEl) errorEl.textContent = '';
+  
+  // Валідація нікнейму
+  if(nickname.length < 3) {
+    if(errorEl) errorEl.textContent = 'Нікнейм має бути мінімум 3 символи';
+    return;
+  }
+  
+  // Перевірка на англійські літери, цифри та підкреслення
+  if(!/^[a-zA-Z0-9_]+$/.test(nickname)) {
+    if(errorEl) errorEl.textContent = 'Нікнейм має містити тільки англійські літери, цифри та _';
+    return;
+  }
   
   try {
     const data = await updateProfile({ name, surname, nickname, email });
@@ -1179,6 +1442,10 @@ function favoritesTabHTML(){
     return `
     <div class="page">
       <h2 class="h2" style="margin-bottom:24px">Улюблені кав'ярні</h2>
+      <div style="background:rgba(115,75,52,0.1);padding:12px 16px;border-radius:12px;margin-bottom:24px;font-size:14px;color:var(--accent);display:flex;align-items:center;gap:8px">
+        <i data-lucide="info" style="width:18px;height:18px"></i>
+        <span><strong>Підказка:</strong> Свайпніть вправо на картці закладу або натисніть ❤️, щоб додати в улюблені</span>
+      </div>
       <div class="empty">
         <i data-lucide="heart" class="icon"></i>
         <h3 style="margin:0 0 8px">Немає улюблених кав'ярень</h3>
@@ -1189,6 +1456,10 @@ function favoritesTabHTML(){
   return `
   <div class="page">
     <h2 class="h2" style="margin-bottom:24px">Улюблені кав'ярні</h2>
+    <div style="background:rgba(115,75,52,0.1);padding:12px 16px;border-radius:12px;margin-bottom:24px;font-size:14px;color:var(--accent);display:flex;align-items:center;gap:8px">
+      <i data-lucide="info" style="width:18px;height:18px"></i>
+      <span>У вас ${state.favorites.length} ${state.favorites.length === 1 ? 'улюблена кав\'ярня' : 'улюблених кав\'ярень'}</span>
+    </div>
     <div class="fav-grid">
       ${state.favorites.map(f=>`
         <div class="fav-card">
@@ -1199,7 +1470,17 @@ function favoritesTabHTML(){
               <div class="rating"><i data-lucide="star" style="width:14px;height:14px"></i><span style="font-weight:600">${fmtRating(f.rating)}</span></div>
             </div>
             <div class="meta" style="margin-bottom:16px"><i data-lucide="map-pin"></i><span>${f.vicinity || '—'}</span></div>
-            <button class="remove" data-id="${f.id}"><i data-lucide="x" style="width:16px;height:16px"></i> Видалити</button>
+            <div style="display:flex;gap:8px;margin-bottom:12px">
+              ${f.geometry && f.geometry.location ? `
+              <button class="btn btn-outline" style="flex:1;padding:10px;font-size:14px" data-fav-route="${f.id}" title="Побудувати маршрут">
+                <i data-lucide="navigation" style="width:16px;height:16px"></i> Маршрут
+              </button>
+              ` : ''}
+              <button class="btn btn-outline" style="flex:1;padding:10px;font-size:14px" data-fav-explore="${f.id}" title="Дізнатись більше" ${!f.place_id && !f.id ? 'disabled' : ''}>
+                <i data-lucide="arrow-right" style="width:16px;height:16px"></i> Дізнатись більше
+              </button>
+            </div>
+            <button class="remove" data-id="${f.id}" title="Видалити з улюблених"><i data-lucide="x" style="width:16px;height:16px"></i> Видалити</button>
           </div>
         </div>`).join('')}
     </div>
@@ -1207,11 +1488,50 @@ function favoritesTabHTML(){
 }
 function afterFavoritesMount(){
   lucide.createIcons();
+  
+  // Видалення з улюблених
   $$('.remove').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const id = btn.getAttribute('data-id');
       state.favorites = state.favorites.filter(x=>x.id!==id);
       saveFavs(); render();
+    });
+  });
+  
+  // Кнопка "Маршрут"
+  $$('[data-fav-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const favId = btn.getAttribute('data-fav-route');
+      const fav = state.favorites.find(f => f.id === favId);
+      if(fav && fav.geometry && fav.geometry.location && state.userPos) {
+        const url = `https://www.google.com/maps/dir/?api=1&origin=${state.userPos.lat},${state.userPos.lng}&destination=${fav.geometry.location.lat},${fav.geometry.location.lng}&travelmode=walking`;
+        window.open(url, '_blank');
+      }
+    });
+  });
+  
+  // Кнопка "Дізнатись більше"
+  $$('[data-fav-explore]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if(btn.disabled) return;
+      const favId = btn.getAttribute('data-fav-explore');
+      const fav = state.favorites.find(f => f.id === favId);
+      if(fav) {
+        // Використовуємо place_id або id (який також є place_id)
+        const placeId = fav.place_id || fav.id;
+        if(placeId) {
+          navigateToExploreForPlace(placeId);
+        } else {
+          // Якщо немає place_id, шукаємо в placesRaw або places
+          const foundPlace = state.placesRaw.find(p => p.name === fav.name) || 
+                            state.places.find(p => p.name === fav.name);
+          if(foundPlace && foundPlace.place_id) {
+            navigateToExploreForPlace(foundPlace.place_id);
+          } else {
+            showToast('⚠️ Не вдалося знайти заклад');
+          }
+        }
+      }
     });
   });
 }
@@ -1252,7 +1572,7 @@ function drawUserMarker(){
   const userMarkerIcon = {
     path: google.maps.SymbolPath.CIRCLE,
     scale: 10,
-    fillColor: '#86461d',
+    fillColor: '#734B34',
     fillOpacity: 1,
     strokeColor: '#fff',
     strokeWeight: 3
@@ -1268,7 +1588,7 @@ function drawUserMarker(){
   
   // Додаємо інфо-вікно з підписом для користувача
   const infoWindow = new google.maps.InfoWindow({
-    content: '<div style="padding:8px 12px;font-weight:600;color:#86461d;text-align:center">📍 Ви тут</div>',
+    content: '<div style="padding:8px 12px;font-weight:600;color:#734B34;text-align:center">📍 Ви тут</div>',
     disableAutoPan: true,
     pixelOffset: new google.maps.Size(0, -35)
   });
@@ -1310,11 +1630,20 @@ function searchNearby(center){
       }
       
       console.log('✅ Знайдено кав\'ярень:', res.length);
-      state.placesRaw = res;  // зберігаємо оригінальні результати
-      state.places = res;     // для карти використовуємо всі
+      // Додаємо відстань до кожного закладу та сортуємо за комбінованим score
+      const placesWithDistance = addDistanceToPlaces(res);
+      // Сортуємо за комбінованим score (рейтинг важливіший, але відстань теж враховується)
+      placesWithDistance.forEach(place => {
+        place.smartScore = calculateSmartScore(place);
+      });
+      placesWithDistance.sort((a, b) => (b.smartScore || -1000) - (a.smartScore || -1000));
+      
+      state.placesRaw = placesWithDistance;  // зберігаємо оригінальні результати з відстанню
+      state.placesToShow = 20; // скидаємо пагінацію
+      state.places = placesWithDistance.slice(0, state.placesToShow); // для карти показуємо перші 20
       state.currentIndex = 0;
       state.errorMessage = null;
-      drawPlaceMarkers(res);
+      drawPlaceMarkers(state.places);
       render();
     });
   } catch(error) {
@@ -1346,7 +1675,7 @@ function drawPlaceMarkers(places){
     // Створюємо індивідуальне інфо-вікно для кожного маркера
     const info = new google.maps.InfoWindow({
       content: `<div style="padding:8px;max-width:200px">
-        <div style="font-weight:600;color:#86461d;margin-bottom:4px">☕ ${p.name}</div>
+        <div style="font-weight:600;color:#734B34;margin-bottom:4px">☕ ${p.name}</div>
         <div style="font-size:12px;color:#666;margin-bottom:4px">${p.vicinity || p.formatted_address || ''}</div>
         <div style="font-size:13px;color:#333">⭐ ${fmtRating(p.rating)}</div>
       </div>`
@@ -1354,7 +1683,7 @@ function drawPlaceMarkers(places){
     
     m.addListener('click', ()=>{
       info.setContent(`<div style="padding:8px;max-width:200px">
-        <div style="font-weight:600;color:#86461d;margin-bottom:4px">☕ ${p.name}</div>
+        <div style="font-weight:600;color:#734B34;margin-bottom:4px">☕ ${p.name}</div>
         <div style="font-size:12px;color:#666;margin-bottom:4px">${p.vicinity || p.formatted_address || ''}</div>
         <div style="font-size:13px;color:#333">⭐ ${fmtRating(p.rating)}</div>
       </div>`);
@@ -1374,13 +1703,75 @@ function drawPlaceMarkers(places){
 
 // ====== Helpers ======
 function currentPlace(){ return state.places[state.currentIndex]; }
+function nextPlace(){
+  if(state.currentIndex < state.places.length - 1) {
+    state.currentIndex++;
+    // Оновлюємо тільки ліву панель
+    const leftPane = $('.left-pane');
+    if(leftPane) {
+      leftPane.innerHTML = leftPaneHTML();
+      afterMapTabMount();
+    }
+  }
+}
 function fmtRating(r){ return r ? Number(r).toFixed(1) : '—'; }
+
+// Розрахунок відстані між двома точками (Haversine формула)
+function calculateDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371; // Радіус Землі в кілометрах
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Відстань в кілометрах
+}
+
+// Додаємо відстань до кожного закладу
+function addDistanceToPlaces(places) {
+  if(!state.userPos) return places;
+  
+  return places.map(place => {
+    if(place.geometry && place.geometry.location) {
+      const lat = place.geometry.location.lat();
+      const lng = place.geometry.location.lng();
+      place.distance = calculateDistance(state.userPos.lat, state.userPos.lng, lat, lng);
+    } else {
+      place.distance = Infinity; // Якщо немає координат, ставимо велику відстань
+    }
+    return place;
+  });
+}
+
+// Розрахунок комбінованого score (рейтинг важливіший за відстань)
+function calculateSmartScore(place) {
+  const rating = place.rating || 0;
+  const distance = place.distance || Infinity;
+  const maxDistance = 5; // Максимальна відстань в км (не показуємо далі)
+  
+  // Якщо заклад занадто далеко, повертаємо дуже низький score
+  if(distance > maxDistance) {
+    return -1000;
+  }
+  
+  // Нормалізуємо рейтинг (0-5 -> 0-100)
+  const ratingScore = rating * 20; // 70% ваги
+  
+  // Нормалізуємо відстань (0-5км -> 100-0)
+  // Чим ближче, тим краще
+  const distanceScore = Math.max(0, (maxDistance - distance) / maxDistance * 100); // 30% ваги
+  
+  // Комбінований score: рейтинг 70%, відстань 30%
+  return ratingScore * 0.7 + distanceScore * 0.3;
+}
 function placeholderImg(){
   // мʼякий градієнт якщо немає фото
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"><defs>
   <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#a76c53"/><stop offset="1" stop-color="#c17857"/>
+    <stop offset="0" stop-color="#8B6F47"/><stop offset="1" stop-color="#A6896B"/>
   </linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/>
   <text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" fill="white" font-family="Inter" font-size="32">Cafe</text></svg>`)}`
 }
@@ -1421,7 +1812,14 @@ function addToFavorites(p){
     name: p.name,
     rating: p.rating,
     vicinity: p.vicinity || p.formatted_address,
-    photo: photoUrl
+    photo: photoUrl,
+    place_id: p.place_id, // Зберігаємо place_id для маршруту
+    geometry: p.geometry ? {
+      location: {
+        lat: p.geometry.location.lat(),
+        lng: p.geometry.location.lng()
+      }
+    } : null
   });
   saveFavs();
 }
@@ -1436,15 +1834,7 @@ function navigateToExploreForPlace(placeId) {
     exploreBtn.classList.add('active');
     state.activeTab = 'explore';
     render();
-    // Після рендеру скролимо до потрібної плитки
-    setTimeout(() => {
-      const tile = $(`[data-id="${placeId}"]`);
-      if(tile) {
-        tile.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        tile.classList.add('focused');
-        setTimeout(() => tile.classList.remove('focused'), 2000);
-      }
-    }, 100);
+    // Виділення відбудеться в afterExploreMount через state.focusedPlaceId
   }
 }
 
@@ -1473,7 +1863,7 @@ function fetchPlaceDetails(placeId, callback) {
   const service = new google.maps.places.PlacesService(state.map);
   service.getDetails({
     placeId: placeId,
-    fields: ['website', 'formatted_phone_number', 'international_phone_number', 'url', 'name', 'formatted_address']
+    fields: ['website', 'formatted_phone_number', 'international_phone_number', 'url', 'name', 'formatted_address', 'opening_hours']
   }, (place, status) => {
     if(status === google.maps.places.PlacesServiceStatus.OK && place) {
       state.placeDetails[placeId] = {
@@ -1491,15 +1881,6 @@ function fetchPlaceDetails(placeId, callback) {
 // ====== ФІЛЬТРАЦІЯ ======
 function applyFiltersInternal() {
   let filtered = [...state.placesRaw];
-
-  // Фільтр по ключовому слову
-  if(state.filters.keyword) {
-    const keyword = state.filters.keyword.toLowerCase();
-    filtered = filtered.filter(p => 
-      p.name.toLowerCase().includes(keyword) ||
-      (p.vicinity && p.vicinity.toLowerCase().includes(keyword))
-    );
-  }
 
   // Фільтр по рейтингу
   if(state.filters.minRating > 0) {
@@ -1529,8 +1910,12 @@ function applyFiltersInternal() {
       break;
     case 'distance':
     default:
-      // Сортування по відстані (якщо є дані про відстань)
-      // Поки що залишаємо як є
+      // Сортування за комбінованим score (рейтинг важливіший за відстань)
+      filtered = addDistanceToPlaces(filtered);
+      filtered.forEach(place => {
+        place.smartScore = calculateSmartScore(place);
+      });
+      filtered.sort((a, b) => (b.smartScore || -1000) - (a.smartScore || -1000));
       break;
   }
 
@@ -1539,19 +1924,32 @@ function applyFiltersInternal() {
 
 function applyFilters() {
   const filtered = applyFiltersInternal();
-  state.places = filtered;
-  
-  // Оновлюємо тільки якщо ми на вкладці "Дослідити"
-  if(state.activeTab === 'explore') {
+  // Зберігаємо всі відфільтровані результати для пагінації
+  // Для карти - зберігаємо в placesRaw, для explore - використовуємо всі
+  if(state.activeTab === 'map') {
+    state.placesRaw = filtered; // Зберігаємо всі відфільтровані для пагінації
+    state.placesToShow = 20;
+    state.places = filtered.slice(0, state.placesToShow);
+    if(state.map) {
+      drawPlaceMarkers(state.places);
+    }
+    // Оновлюємо ліву панель
+    const leftPane = $('.left-pane');
+    if(leftPane) {
+      leftPane.innerHTML = leftPaneHTML();
+      afterMapTabMount();
+    }
+  } else {
+    // Для explore показуємо всі відфільтровані
+    state.places = filtered;
     const root = $('#root');
     if(root) {
       root.innerHTML = exploreTabHTML();
       afterExploreMount();
     }
-  }
-  
-  if(state.map) {
-    drawPlaceMarkers(filtered);
+    if(state.map) {
+      drawPlaceMarkers(filtered);
+    }
   }
 }
 
@@ -1637,7 +2035,13 @@ function searchNearbyWithFilters() {
 
   svc.nearbySearch(request, (res, status) => {
     if(status === google.maps.places.PlacesServiceStatus.OK && res?.length) {
-      state.placesRaw = res;
+      // Додаємо відстань та сортуємо за комбінованим score
+      const placesWithDistance = addDistanceToPlaces(res);
+      placesWithDistance.forEach(place => {
+        place.smartScore = calculateSmartScore(place);
+      });
+      placesWithDistance.sort((a, b) => (b.smartScore || -1000) - (a.smartScore || -1000));
+      state.placesRaw = placesWithDistance;
       applyFilters();
     } else {
       console.warn('Помилка пошуку з фільтрами:', status);
