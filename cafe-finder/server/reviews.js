@@ -125,11 +125,44 @@ router.get('/reviews/place/:place_id', (req, res) => {
 });
 
 // Отримати всі відгуки (з опціональними фільтрами)
-router.get('/reviews', (req, res) => {
+// Middleware для опціональної автентифікації
+router.get('/reviews', (req, res, next) => {
+  // Спробуємо автентифікувати, але не вимагаємо
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token) {
+    try {
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-in-production');
+      // Отримуємо користувача з БД
+      db.query('SELECT id, name, surname, nickname, email, avatar_url FROM users WHERE id = ?', [decoded.userId], (err, rows) => {
+        if (!err && rows.length > 0) {
+          req.user = rows[0];
+        }
+        next();
+      });
+    } catch (err) {
+      // Токен невалідний, продовжуємо без автентифікації
+      next();
+    }
+  } else {
+    next();
+  }
+}, (req, res) => {
   const { place_id, user_id } = req.query;
-  let query = `SELECT r.*, u.id as user_id, u.name as user_name, u.avatar_url 
-               FROM reviews r 
+  const currentUserId = req.user?.id || null; // Якщо користувач авторизований
+  
+  let query = `SELECT r.*, u.id as user_id, u.name as user_name, u.avatar_url,
+               COUNT(DISTINCT rl.id) as likes_count`;
+  
+  if (currentUserId) {
+    query += `, EXISTS(SELECT 1 FROM review_likes WHERE review_id = r.id AND user_id = ?) as is_liked`;
+  } else {
+    query += `, 0 as is_liked`;
+  }
+  
+  query += ` FROM reviews r 
                JOIN users u ON r.user_id = u.id 
+               LEFT JOIN review_likes rl ON r.id = rl.review_id
                WHERE 1=1`;
   const params = [];
 
@@ -142,10 +175,19 @@ router.get('/reviews', (req, res) => {
     params.push(user_id);
   }
 
+  query += ' GROUP BY r.id';
+  
+  if (currentUserId) {
+    params.push(currentUserId); // Для is_liked
+  }
+  
   query += ' ORDER BY r.created_at DESC';
 
   db.query(query, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.toString() });
+    if (err) {
+      console.error('Помилка завантаження відгуків:', err);
+      return res.status(500).json({ error: err.toString() });
+    }
 
     res.json({
       reviews: rows.map(row => ({
@@ -156,6 +198,8 @@ router.get('/reviews', (req, res) => {
         comment: row.comment,
         created_at: row.created_at,
         updated_at: row.updated_at,
+        likes_count: parseInt(row.likes_count) || 0,
+        is_liked: row.is_liked === 1 || row.is_liked === true,
         user: {
           id: row.user_id,
           name: row.user_name,
@@ -180,6 +224,47 @@ router.delete('/reviews/:id', authenticateToken, (req, res) => {
     db.query('DELETE FROM reviews WHERE id = ?', [id], (err) => {
       if (err) return res.status(500).json({ error: err.toString() });
       res.json({ message: 'Відгук видалено' });
+    });
+  });
+});
+
+// Поставити/прибрати лайк відгуку
+router.post('/reviews/:id/like', authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  // Перевіряємо, чи існує відгук
+  db.query('SELECT id FROM reviews WHERE id = ?', [id], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.toString() });
+    if (!rows.length) return res.status(404).json({ error: 'Відгук не знайдено' });
+
+    // Перевіряємо, чи вже є лайк
+    db.query('SELECT id FROM review_likes WHERE review_id = ? AND user_id = ?', [id, userId], (err, likeRows) => {
+      if (err) return res.status(500).json({ error: err.toString() });
+
+      if (likeRows.length > 0) {
+        // Прибираємо лайк
+        db.query('DELETE FROM review_likes WHERE review_id = ? AND user_id = ?', [id, userId], (err) => {
+          if (err) return res.status(500).json({ error: err.toString() });
+          
+          // Отримуємо оновлену кількість лайків
+          db.query('SELECT COUNT(*) as count FROM review_likes WHERE review_id = ?', [id], (err, countRows) => {
+            if (err) return res.status(500).json({ error: err.toString() });
+            res.json({ liked: false, likes_count: countRows[0].count });
+          });
+        });
+      } else {
+        // Додаємо лайк
+        db.query('INSERT INTO review_likes (review_id, user_id) VALUES (?, ?)', [id, userId], (err) => {
+          if (err) return res.status(500).json({ error: err.toString() });
+          
+          // Отримуємо оновлену кількість лайків
+          db.query('SELECT COUNT(*) as count FROM review_likes WHERE review_id = ?', [id], (err, countRows) => {
+            if (err) return res.status(500).json({ error: err.toString() });
+            res.json({ liked: true, likes_count: countRows[0].count });
+          });
+        });
+      }
     });
   });
 });

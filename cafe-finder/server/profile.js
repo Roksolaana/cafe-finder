@@ -39,15 +39,20 @@ const upload = multer({
 
 // Отримати профіль поточного користувача
 router.get('/profile', authenticateToken, (req, res) => {
-  db.query('SELECT id, name, email, avatar_url, created_at FROM users WHERE id = ?', [req.user.id], (err, rows) => {
+  db.query('SELECT id, name, surname, nickname, email, avatar_url, created_at FROM users WHERE id = ?', [req.user.id], (err, rows) => {
     if (err) return res.status(500).json({ error: err.toString() });
     if (!rows.length) return res.status(404).json({ error: 'Користувача не знайдено' });
     
     const user = rows[0];
+    let avatarPath = null;
+    if (user.avatar_url) {
+      const fileName = path.basename(user.avatar_url);
+      avatarPath = `/uploads/${fileName}`;
+    }
     res.json({
       user: {
         ...user,
-        avatar_url: user.avatar_url ? `/uploads/${path.basename(user.avatar_url)}` : null
+        avatar_url: avatarPath
       }
     });
   });
@@ -56,93 +61,166 @@ router.get('/profile', authenticateToken, (req, res) => {
 // Оновити профіль
 router.put('/profile', authenticateToken, (req, res) => {
   const { name, surname, nickname, email } = req.body;
-  const updates = [];
-  const values = [];
+  
+  // Перевіряємо, чи є дані для оновлення
+  if (name === undefined && surname === undefined && nickname === undefined && email === undefined) {
+    return res.status(400).json({ error: 'Немає даних для оновлення' });
+  }
 
-  if (name !== undefined) {
-    updates.push('name = ?');
-    values.push(name);
-  }
-  if (surname !== undefined) {
-    updates.push('surname = ?');
-    values.push(surname);
-  }
-  if (nickname !== undefined) {
-    // Спочатку перевіряємо, чи нікнейм змінився
-    db.query('SELECT nickname FROM users WHERE id = ?', [req.user.id], (err, userRows) => {
-      if (err) return res.status(500).json({ error: err.toString() });
+  // Спочатку отримуємо поточні дані користувача
+  db.query('SELECT nickname, email FROM users WHERE id = ?', [req.user.id], (err, userRows) => {
+    if (err) return res.status(500).json({ error: err.toString() });
+    if (!userRows.length) return res.status(404).json({ error: 'Користувача не знайдено' });
+    
+    const currentUser = userRows[0];
+    const updates = [];
+    const values = [];
+
+    // Додаємо поля для оновлення (окрім nickname та email, які потребують перевірки)
+    // ВАЖЛИВО: created_at НЕ повинно оновлюватися - воно залишається незмінним
+    if (name !== undefined) {
+      updates.push('name = ?');
+      values.push(name || null);
+    }
+    if (surname !== undefined) {
+      updates.push('surname = ?');
+      values.push(surname || null);
+    }
+
+    // Функція для виконання оновлення
+    const processUpdate = () => {
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'Немає даних для оновлення' });
+      }
+
+      const finalValues = [...values];
+      finalValues.push(req.user.id);
+
+      // Переконуємося, що created_at не оновлюється
+      // (воно не повинно бути в updates, але для впевненості перевіряємо)
+      const updateQuery = `UPDATE users SET ${updates.join(', ')} WHERE id = ?`;
       
-      const currentNickname = userRows[0]?.nickname;
-      
-      // Якщо нікнейм не змінився, не перевіряємо унікальність
-      if (currentNickname === nickname) {
+      db.query(
+        updateQuery,
+        finalValues,
+        (err) => {
+          if (err) {
+            if (err.code === 'ER_DUP_ENTRY') {
+              if (err.message.includes('nickname')) {
+                return res.status(400).json({ error: 'Нікнейм вже зайнятий. Оберіть інший.' });
+              }
+              if (err.message.includes('email')) {
+                return res.status(400).json({ error: 'Email вже використовується' });
+              }
+            }
+            return res.status(500).json({ error: err.toString() });
+          }
+          
+          // Повертаємо оновлені дані
+          db.query('SELECT id, name, surname, nickname, email, avatar_url, created_at FROM users WHERE id = ?', [req.user.id], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.toString() });
+            const user = rows[0];
+            let avatarPath = null;
+            if (user.avatar_url) {
+              const fileName = path.basename(user.avatar_url);
+              avatarPath = `/uploads/${fileName}`;
+            }
+            res.json({
+              user: {
+                ...user,
+                avatar_url: avatarPath
+              }
+            });
+          });
+        }
+      );
+    };
+
+    // Перевіряємо нікнейм, якщо він переданий
+    if (nickname !== undefined) {
+      // Якщо нікнейм не змінився, просто додаємо його
+      if (currentUser.nickname === nickname) {
         updates.push('nickname = ?');
         values.push(nickname);
-        processUpdate();
+        // Перевіряємо email, якщо він переданий
+        if (email !== undefined) {
+          if (currentUser.email === email) {
+            updates.push('email = ?');
+            values.push(email);
+            processUpdate();
+          } else {
+            // Перевіряємо унікальність email
+            db.query('SELECT id FROM users WHERE email = ? AND id != ?', [email, req.user.id], (err, emailRows) => {
+              if (err) return res.status(500).json({ error: err.toString() });
+              if (emailRows.length > 0) {
+                return res.status(400).json({ error: 'Email вже використовується' });
+              }
+              updates.push('email = ?');
+              values.push(email);
+              processUpdate();
+            });
+          }
+        } else {
+          processUpdate();
+        }
       } else {
-        // Перевіряємо унікальність нікнейму (крім поточного користувача)
-        db.query('SELECT id FROM users WHERE nickname = ? AND id != ?', [nickname, req.user.id], (err, rows) => {
+        // Перевіряємо унікальність нікнейму
+        db.query('SELECT id FROM users WHERE nickname = ? AND id != ?', [nickname, req.user.id], (err, nicknameRows) => {
           if (err) return res.status(500).json({ error: err.toString() });
-          if (rows.length > 0) {
+          if (nicknameRows.length > 0) {
             return res.status(400).json({ error: 'Нікнейм вже зайнятий. Оберіть інший.' });
           }
           
           updates.push('nickname = ?');
           values.push(nickname);
+          
+          // Перевіряємо email, якщо він переданий
+          if (email !== undefined) {
+            if (currentUser.email === email) {
+              updates.push('email = ?');
+              values.push(email);
+              processUpdate();
+            } else {
+              // Перевіряємо унікальність email
+              db.query('SELECT id FROM users WHERE email = ? AND id != ?', [email, req.user.id], (err, emailRows) => {
+                if (err) return res.status(500).json({ error: err.toString() });
+                if (emailRows.length > 0) {
+                  return res.status(400).json({ error: 'Email вже використовується' });
+                }
+                updates.push('email = ?');
+                values.push(email);
+                processUpdate();
+              });
+            }
+          } else {
+            processUpdate();
+          }
+        });
+      }
+    } else {
+      // Нікнейм не переданий, перевіряємо тільки email
+      if (email !== undefined) {
+        if (currentUser.email === email) {
+          updates.push('email = ?');
+          values.push(email);
           processUpdate();
-        });
-      }
-    });
-    return;
-  }
-  if (email !== undefined) {
-    updates.push('email = ?');
-    values.push(email);
-  }
-
-  processUpdate();
-
-  function processUpdate() {
-    if (updates.length === 0) {
-      return res.status(400).json({ error: 'Немає даних для оновлення' });
-    }
-
-    const finalValues = [...values];
-    finalValues.push(req.user.id);
-
-    db.query(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
-      finalValues,
-      (err) => {
-        if (err) {
-          if (err.code === 'ER_DUP_ENTRY') {
-            if (err.message.includes('nickname')) {
-              return res.status(400).json({ error: 'Нікнейм вже зайнятий. Оберіть інший.' });
+        } else {
+          // Перевіряємо унікальність email
+          db.query('SELECT id FROM users WHERE email = ? AND id != ?', [email, req.user.id], (err, emailRows) => {
+            if (err) return res.status(500).json({ error: err.toString() });
+            if (emailRows.length > 0) {
+              return res.status(400).json({ error: 'Email вже використовується' });
             }
-            return res.status(400).json({ error: 'Email вже використовується' });
-          }
-          return res.status(500).json({ error: err.toString() });
-        }
-        
-        // Повертаємо оновлені дані
-        db.query('SELECT id, name, surname, nickname, email, avatar_url FROM users WHERE id = ?', [req.user.id], (err, rows) => {
-          if (err) return res.status(500).json({ error: err.toString() });
-          const user = rows[0];
-          let avatarPath = null;
-          if (user.avatar_url) {
-            const fileName = path.basename(user.avatar_url);
-            avatarPath = `/uploads/${fileName}`;
-          }
-          res.json({
-            user: {
-              ...user,
-              avatar_url: avatarPath
-            }
+            updates.push('email = ?');
+            values.push(email);
+            processUpdate();
           });
-        });
+        }
+      } else {
+        processUpdate();
       }
-    );
-  }
+    }
+  });
 });
 
 // Завантажити аватар

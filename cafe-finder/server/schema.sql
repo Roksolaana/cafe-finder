@@ -1,5 +1,4 @@
 -- Cafe Finder MySQL schema
--- Adjust database name if needed to match your .env DB_NAME
 
 -- 1) Create database (optional)
 CREATE DATABASE IF NOT EXISTS `cafefinder`
@@ -31,7 +30,7 @@ DROP TABLE IF EXISTS `reviews`;
 CREATE TABLE `reviews` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id` INT UNSIGNED NOT NULL,
-  `place_id` VARCHAR(64) NOT NULL, -- Google Places ID
+  `place_id` VARCHAR(64) NOT NULL, 
   `place_name` VARCHAR(255) NULL,
   `rating` TINYINT UNSIGNED NOT NULL, -- 1..5
   `comment` TEXT NULL,
@@ -68,7 +67,7 @@ CREATE TABLE `list_places` (
   `place_id` VARCHAR(64) NOT NULL,
   `place_name` VARCHAR(255) NULL,
   `place_photo` VARCHAR(255) NULL,
-  `place_rating` DECIMAL(3,2) NULL, -- avg rating from Google if you store it
+  `place_rating` DECIMAL(3,2) NULL, 
   `place_vicinity` VARCHAR(255) NULL,
   `added_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -78,6 +77,39 @@ CREATE TABLE `list_places` (
   UNIQUE KEY `uq_list_places_unique` (`list_id`, `place_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Optional: seed admin or demo user (uncomment and set hash)
--- INSERT INTO users (name, surname, nickname, email, password_hash)
--- VALUES ('Demo', 'User', 'demo', 'demo@example.com', '$2b$10$replace_with_real_bcrypt_hash');
+-- 6) Review likes table
+DROP TABLE IF EXISTS `review_likes`;
+CREATE TABLE `review_likes` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `review_id` INT UNSIGNED NOT NULL,
+  `user_id` INT UNSIGNED NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_review_likes_review_id` (`review_id`),
+  KEY `idx_review_likes_user_id` (`user_id`),
+  CONSTRAINT `fk_review_likes_review` FOREIGN KEY (`review_id`) REFERENCES `reviews`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_review_likes_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `uq_review_likes_user_review` (`user_id`, `review_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 7) User favorites table
+DROP TABLE IF EXISTS `user_favorites`;
+CREATE TABLE `user_favorites` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` INT UNSIGNED NOT NULL,
+  `place_id` VARCHAR(64) NOT NULL,
+  `place_name` VARCHAR(255) NOT NULL,
+  `place_photo` VARCHAR(500) NULL,
+  `place_rating` DECIMAL(3,2) NULL,
+  `place_vicinity` VARCHAR(255) NULL,
+  `place_geometry_lat` DECIMAL(10,8) NULL,
+  `place_geometry_lng` DECIMAL(11,8) NULL,
+  `added_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_favorites_user_id` (`user_id`),
+  KEY `idx_user_favorites_place_id` (`place_id`),
+  CONSTRAINT `fk_user_favorites_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `uq_user_favorites_user_place` (`user_id`, `place_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
