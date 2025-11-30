@@ -123,6 +123,10 @@ body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif;color:
 }
 .empty .icon{width:64px;height:64px;color:var(--accent-3);margin:0 auto 16px}
 
+/* Review card place photo */
+.review-place{display:flex;align-items:center;gap:10px;margin-top:12px}
+.review-place-photo{width:96px;height:64px;object-fit:cover;border-radius:8px;flex:0 0 auto;border:1px solid var(--border)}
+
 /* Right column (map) */
 .right-pane{
   position:sticky;top:81px;height:calc(150vh - 81px);
@@ -150,6 +154,26 @@ body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif;color:
   box-shadow:0 4px 16px rgba(115,75,52,.25);
   font-size:16px;display:inline-flex;align-items:center;gap:10px;
   letter-spacing:0.01em
+}
+.btn-sm{
+  padding:8px 12px;
+  font-size:13px;
+  border-radius:10px;
+  gap:8px;
+  /* Prevent small buttons from stretching in flex containers */
+  flex: 0 0 auto;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:44px;
+}
+
+/* Ensure action buttons under reviews are compact, not stretched */
+.review-actions .btn{
+  flex: 0 0 auto;
+  padding:8px 12px;
+  font-size:13px;
+  border-radius:10px;
 }
 .btn-pill:hover{
   background:var(--accent-2);
@@ -255,6 +279,65 @@ body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif;color:
   font-weight:600;opacity:0;pointer-events:none;transition:opacity .35s;z-index:9999
 }
 .toast.show{opacity:1}
+
+/* Confirm modal */
+.confirm-modal{
+  position:fixed;inset:0;background:rgba(3,3,2,.55);
+  backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .2s ease;
+  z-index:10000;
+  padding:24px;
+}
+.confirm-modal.show{
+  opacity:1;pointer-events:auto;
+}
+.confirm-dialog{
+  width:100%;max-width:420px;background:#fff;border-radius:24px;
+  padding:32px;box-shadow:0 24px 80px rgba(3,3,2,.18);
+  text-align:center;
+  animation:scaleIn .25s ease;
+}
+.confirm-icon{
+  width:56px;height:56px;border-radius:16px;
+  margin:0 auto 16px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(115,75,52,.12);color:var(--accent);
+}
+.confirm-icon i{width:28px;height:28px}
+.confirm-title{
+  margin:0 0 8px;font-size:22px;font-weight:600;letter-spacing:-.01em;
+}
+.confirm-message{
+  margin:0 auto 24px;color:var(--muted);font-size:15px;line-height:1.5;
+}
+.confirm-actions{
+  display:flex;gap:12px;
+}
+.confirm-btn{
+  flex:1;border:none;border-radius:14px;padding:14px 18px;
+  font-weight:600;cursor:pointer;font-size:15px;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  transition:all .2s ease;
+}
+.confirm-btn.cancel{
+  background:rgba(115,75,52,.08);color:var(--accent);
+}
+.confirm-btn.cancel:hover{
+  background:rgba(115,75,52,.16);
+}
+.confirm-btn.danger{
+  background:var(--accent);color:#fff;box-shadow:0 8px 24px rgba(115,75,52,.25);
+}
+.confirm-btn.danger:hover{
+  background:var(--accent-2);
+  box-shadow:0 12px 32px rgba(115,75,52,.35);
+  transform:translateY(-1px);
+}
+@keyframes scaleIn{
+  from{transform:scale(.95);opacity:0}
+  to{transform:scale(1);opacity:1}
+}
 
 /* Filters */
 .filters-section{

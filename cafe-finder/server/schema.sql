@@ -1,15 +1,21 @@
--- Cafe Finder MySQL schema
+-- Cafe Finder MySQL schema 
 
--- 1) Create database (optional)
+-- 1) Створити базу даних
 CREATE DATABASE IF NOT EXISTS `cafefinder`
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 
--- Use the database
 USE `cafefinder`;
 
--- 2) Users table
+-- Видаляємо таблиці в правильному порядку (спочатку залежні)
+DROP TABLE IF EXISTS `review_likes`;
+DROP TABLE IF EXISTS `list_places`;
+DROP TABLE IF EXISTS `lists`;
+DROP TABLE IF EXISTS `user_favorites`;
+DROP TABLE IF EXISTS `reviews`;
 DROP TABLE IF EXISTS `users`;
+
+-- 2) Таблиця користувачів
 CREATE TABLE `users` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(100) NULL,
@@ -25,14 +31,13 @@ CREATE TABLE `users` (
   UNIQUE KEY `uq_users_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 3) Reviews table
-DROP TABLE IF EXISTS `reviews`;
+-- 3) Таблиця відгуків
 CREATE TABLE `reviews` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id` INT UNSIGNED NOT NULL,
   `place_id` VARCHAR(64) NOT NULL, 
   `place_name` VARCHAR(255) NULL,
-  `rating` TINYINT UNSIGNED NOT NULL, -- 1..5
+  `rating` TINYINT UNSIGNED NOT NULL,
   `comment` TEXT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -44,8 +49,21 @@ CREATE TABLE `reviews` (
   UNIQUE KEY `uq_reviews_user_place` (`user_id`, `place_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 4) Lists table (custom user lists / collections)
-DROP TABLE IF EXISTS `lists`;
+-- 4) Таблиця лайків відгуків (ВАЖЛИВА!)
+CREATE TABLE `review_likes` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `review_id` INT UNSIGNED NOT NULL,
+  `user_id` INT UNSIGNED NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_review_likes_review_id` (`review_id`),
+  KEY `idx_review_likes_user_id` (`user_id`),
+  CONSTRAINT `fk_review_likes_review` FOREIGN KEY (`review_id`) REFERENCES `reviews`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_review_likes_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  UNIQUE KEY `uq_review_likes_user_review` (`user_id`, `review_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 5) Таблиця списків
 CREATE TABLE `lists` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id` INT UNSIGNED NOT NULL,
@@ -59,8 +77,7 @@ CREATE TABLE `lists` (
   CONSTRAINT `fk_lists_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 5) List places (items inside a list)
-DROP TABLE IF EXISTS `list_places`;
+-- 6) Таблиця місць у списках
 CREATE TABLE `list_places` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `list_id` INT UNSIGNED NOT NULL,
@@ -77,29 +94,13 @@ CREATE TABLE `list_places` (
   UNIQUE KEY `uq_list_places_unique` (`list_id`, `place_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 6) Review likes table
-DROP TABLE IF EXISTS `review_likes`;
-CREATE TABLE `review_likes` (
-  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `review_id` INT UNSIGNED NOT NULL,
-  `user_id` INT UNSIGNED NOT NULL,
-  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_review_likes_review_id` (`review_id`),
-  KEY `idx_review_likes_user_id` (`user_id`),
-  CONSTRAINT `fk_review_likes_review` FOREIGN KEY (`review_id`) REFERENCES `reviews`(`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_review_likes_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
-  UNIQUE KEY `uq_review_likes_user_review` (`user_id`, `review_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 7) User favorites table
-DROP TABLE IF EXISTS `user_favorites`;
+-- 7) Таблиця улюблених користувача
 CREATE TABLE `user_favorites` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id` INT UNSIGNED NOT NULL,
   `place_id` VARCHAR(64) NOT NULL,
   `place_name` VARCHAR(255) NOT NULL,
-  `place_photo` VARCHAR(500) NULL,
+  `place_photo` TEXT NULL COMMENT 'Фото-URL може бути довгим, зберігаємо у TEXT',
   `place_rating` DECIMAL(3,2) NULL,
   `place_vicinity` VARCHAR(255) NULL,
   `place_geometry_lat` DECIMAL(10,8) NULL,
@@ -112,4 +113,7 @@ CREATE TABLE `user_favorites` (
   UNIQUE KEY `uq_user_favorites_user_place` (`user_id`, `place_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Перевірка створених таблиць
+SHOW TABLES;
 
+SELECT 'Database setup complete! ✅' AS Status;

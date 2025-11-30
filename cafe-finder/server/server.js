@@ -14,7 +14,7 @@ const { authenticateToken } = require('./auth');
 const app = express();
 
 // ----------------------------
-// 🌐 CORS + JSON
+// CORS + JSON
 // ----------------------------
 app.use(cors({
   origin: '*',
@@ -23,7 +23,7 @@ app.use(cors({
 app.use(express.json());
 
 // ----------------------------
-// 📁 Папка для збереження файлів (аватари)
+// Папка для збереження файлів (аватари)
 // ----------------------------
 const uploadRoot = path.join(__dirname, process.env.UPLOAD_DIR || 'uploads');
 if (!fs.existsSync(uploadRoot)) {
@@ -33,7 +33,7 @@ if (!fs.existsSync(uploadRoot)) {
 app.use('/uploads', express.static(uploadRoot));
 
 // ----------------------------
-// 📌 Логування всіх запитів
+//  Логування всіх запитів
 // ----------------------------
 app.use((req, res, next) => {
   console.log(`[${req.method}] ${req.url}`);
@@ -41,7 +41,7 @@ app.use((req, res, next) => {
 });
 
 // ----------------------------
-// 🔗 Підключення API-маршрутів
+// Підключення API-маршрутів
 // ----------------------------
 app.use('/api', authRoutes);
 app.use('/api', profileRoutes);
@@ -50,7 +50,7 @@ app.use('/api', listRoutes);
 app.use('/api', favoritesRoutes);
 
 // ----------------------------
-// 🔎 Перевірка унікальності нікнейму
+// Перевірка унікальності нікнейму
 // ----------------------------
 app.get('/api/check-nickname', (req, res) => {
   const { nickname } = req.query;
@@ -67,7 +67,7 @@ app.get('/api/check-nickname', (req, res) => {
 
 
 // ----------------------------
-// 🔍 Пошук користувачів (q=)
+// Пошук користувачів (q=)
 // ----------------------------
 app.get('/api/users/search', (req, res) => {
   const { q } = req.query;
@@ -95,7 +95,7 @@ app.get('/api/users/search', (req, res) => {
 });
 
 // ----------------------------
-// 🧑‍🤝‍🧑 Отримати всіх користувачів
+// Отримати всіх користувачів
 // ----------------------------
 app.get('/api/users', (req, res) => {
   db.query(
@@ -114,7 +114,7 @@ app.get('/api/users', (req, res) => {
 });
 
 // ----------------------------
-// 🧑 Отримати користувача за ID
+// Отримати користувача за ID
 // ----------------------------
 app.get('/api/users/:id', (req, res) => {
   const { id } = req.params;
@@ -138,7 +138,7 @@ app.get('/api/users/:id', (req, res) => {
 });
 
 // ----------------------------
-// ❌ Видалити свій акаунт
+// Видалити свій акаунт
 // ----------------------------
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
@@ -154,7 +154,7 @@ app.delete('/api/users/:id', authenticateToken, (req, res) => {
 });
 
 // ----------------------------
-// 🩺 Тест зʼєднання з БД
+// Тест зʼєднання з БД
 // ----------------------------
 app.get('/api/health', (req, res) => {
   db.query('SELECT 1 AS ok', (err, rows) => {
@@ -164,16 +164,46 @@ app.get('/api/health', (req, res) => {
 });
 
 // ----------------------------
-// ❌ 404 Middleware
+// 404 Middleware
 // ----------------------------
 app.use((req, res) => {
   res.status(404).json({ error: "Маршрут не знайдено" });
 });
 
 // ----------------------------
-// 🚀 Запуск сервера
+// Запуск сервера
 // ----------------------------
 const port = process.env.PORT || 3001;
-app.listen(port, () =>
-  console.log(`✅ API running on http://localhost:${port}`)
-);
+
+// -- Startup checks: warn if JWT secret missing and ensure review_likes table exists
+if(!process.env.JWT_SECRET) {
+  console.warn('⚠️ WARNING: JWT_SECRET is not set. Using a default insecure secret. Set JWT_SECRET in your .env for production.');
+}
+
+const ensureReviewLikesSQL = `
+CREATE TABLE IF NOT EXISTS ` + '`review_likes`' + ` (
+  ` + '`id`' + ` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ` + '`review_id`' + ` INT UNSIGNED NOT NULL,
+  ` + '`user_id`' + ` INT UNSIGNED NOT NULL,
+  ` + '`created_at`' + ` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (` + '`id`' + `),
+  KEY ` + '`idx_review_likes_review_id`' + ` (` + '`review_id`' + `),
+  KEY ` + '`idx_review_likes_user_id`' + ` (` + '`user_id`' + `),
+  CONSTRAINT ` + '`fk_review_likes_review`' + ` FOREIGN KEY (` + '`review_id`' + `) REFERENCES ` + '`reviews`' + `(` + '`id`' + `) ON DELETE CASCADE,
+  CONSTRAINT ` + '`fk_review_likes_user`' + ` FOREIGN KEY (` + '`user_id`' + `) REFERENCES ` + '`users`' + `(` + '`id`' + `) ON DELETE CASCADE,
+  UNIQUE KEY ` + '`uq_review_likes_user_review`' + ` (` + '`user_id`' + `, ` + '`review_id`' + `)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`;
+
+db.query(ensureReviewLikesSQL, (err) => {
+  if(err) {
+    console.error('❌ Помилка при перевірці/створенні таблиці review_likes:', err);
+    console.error('Запустіть manual import schema.sql або server/create-review-likes.js, якщо помилка повторюється.');
+    // Still start server — non-fatal for other features, but log prominently
+  } else {
+    console.log('✅ review_likes table exists or was created');
+  }
+
+  app.listen(port, () =>
+    console.log(`✅ API running on http://localhost:${port}`)
+  );
+});

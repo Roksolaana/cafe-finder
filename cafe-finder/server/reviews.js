@@ -124,47 +124,56 @@ router.get('/reviews/place/:place_id', (req, res) => {
   );
 });
 
-// Отримати всі відгуки (з опціональними фільтрами)
 // Middleware для опціональної автентифікації
-router.get('/reviews', (req, res, next) => {
-  // Спробуємо автентифікувати, але не вимагаємо
+function authenticateTokenOptional(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
-  if (token) {
-    try {
-      const jwt = require('jsonwebtoken');
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-in-production');
-      // Отримуємо користувача з БД
-      db.query('SELECT id, name, surname, nickname, email, avatar_url FROM users WHERE id = ?', [decoded.userId], (err, rows) => {
-        if (!err && rows.length > 0) {
-          req.user = rows[0];
-        }
-        next();
-      });
-    } catch (err) {
-      // Токен невалідний, продовжуємо без автентифікації
-      next();
-    }
-  } else {
+  if (!token) return next();
+  
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key-change-in-production');
+    req.user = decoded;
+    next();
+  } catch (err) {
     next();
   }
-}, (req, res) => {
+}
+
+// Отримати всі відгуки (з опціональними фільтрами) - ВИПРАВЛЕНО
+router.get('/reviews', authenticateTokenOptional, (req, res) => {
   const { place_id, user_id } = req.query;
-  const currentUserId = req.user?.id || null; // Якщо користувач авторизований
+  const currentUserId = req.user?.id || null;
   
-  let query = `SELECT r.*, u.id as user_id, u.name as user_name, u.avatar_url,
-               COUNT(DISTINCT rl.id) as likes_count`;
+  const params = [];
+  
+  // Будуємо запит - ВИПРАВЛЕНО GROUP BY
+  let query = `
+    SELECT 
+      r.id,
+      r.user_id,
+      r.place_id,
+      r.place_name,
+      r.rating,
+      r.comment,
+      r.created_at,
+      r.updated_at,
+      u.id as user_id,
+      u.name as user_name,
+      u.avatar_url,
+      COUNT(DISTINCT rl.id) as likes_count`;
   
   if (currentUserId) {
-    query += `, EXISTS(SELECT 1 FROM review_likes WHERE review_id = r.id AND user_id = ?) as is_liked`;
+    query += `, MAX(CASE WHEN rl.user_id = ? THEN 1 ELSE 0 END) as is_liked`;
+    params.push(currentUserId);
   } else {
     query += `, 0 as is_liked`;
   }
   
-  query += ` FROM reviews r 
-               JOIN users u ON r.user_id = u.id 
-               LEFT JOIN review_likes rl ON r.id = rl.review_id
-               WHERE 1=1`;
-  const params = [];
+  query += `
+    FROM reviews r 
+    JOIN users u ON r.user_id = u.id 
+    LEFT JOIN review_likes rl ON r.id = rl.review_id
+    WHERE 1=1`;
 
   if (place_id) {
     query += ' AND r.place_id = ?';
@@ -175,13 +184,9 @@ router.get('/reviews', (req, res, next) => {
     params.push(user_id);
   }
 
-  query += ' GROUP BY r.id';
-  
-  if (currentUserId) {
-    params.push(currentUserId); // Для is_liked
-  }
-  
-  query += ' ORDER BY r.created_at DESC';
+  query += ` GROUP BY r.id, r.user_id, r.place_id, r.place_name, r.rating, 
+             r.comment, r.created_at, r.updated_at, u.id, u.name, u.avatar_url
+             ORDER BY r.created_at DESC`;
 
   db.query(query, params, (err, rows) => {
     if (err) {
@@ -223,7 +228,7 @@ router.delete('/reviews/:id', authenticateToken, (req, res) => {
 
     db.query('DELETE FROM reviews WHERE id = ?', [id], (err) => {
       if (err) return res.status(500).json({ error: err.toString() });
-      res.json({ message: 'Відгук видалено' });
+      res.json({ message: '✅ Відгук видалено' });
     });
   });
 });
@@ -270,4 +275,3 @@ router.post('/reviews/:id/like', authenticateToken, (req, res) => {
 });
 
 module.exports = router;
-

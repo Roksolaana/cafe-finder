@@ -75,11 +75,18 @@ router.post('/favorites', authenticateToken, (req, res) => {
         }
       }
 
+      let normalizedPhoto = place_photo || null;
+      if (normalizedPhoto && typeof normalizedPhoto === 'string') {
+        if (normalizedPhoto.startsWith('data:') || normalizedPhoto.length > 4000) {
+          normalizedPhoto = null; // Google data URLs можуть бути дуже довгими
+        }
+      }
+
       db.query(
         `INSERT INTO user_favorites 
          (user_id, place_id, place_name, place_photo, place_rating, place_vicinity, place_geometry_lat, place_geometry_lng)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [req.user.id, place_id, place_name, place_photo || null, place_rating || null, place_vicinity || null, lat, lng],
+        [req.user.id, place_id, place_name, normalizedPhoto, place_rating || null, place_vicinity || null, lat, lng],
         (err, result) => {
           if (err) {
             console.error('Помилка додавання до улюблених:', err);

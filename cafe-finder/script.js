@@ -1,4 +1,3 @@
-// ====== ГЛОБАЛЬНИЙ СТАН ======
 let state = {
   activeTab: 'map',
   places: [],         // відфільтровані результати для відображення
@@ -34,6 +33,61 @@ const $$ = (q, root=document) => [...root.querySelectorAll(q)];
 const showToast = (msg='💖 Додано в улюблені') => {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'), 1800);
+};
+
+const confirmDialog = (message, options = {}) => {
+  const {
+    title = 'Підтвердження',
+    confirmText = 'Підтвердити',
+    cancelText = 'Скасувати',
+    icon = 'alert-triangle'
+  } = options;
+
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal';
+    overlay.innerHTML = `
+      <div class="confirm-dialog">
+        <div class="confirm-icon">
+          <i data-lucide="${icon}"></i>
+        </div>
+        <h3 class="confirm-title">${title}</h3>
+        <p class="confirm-message">${message}</p>
+        <div class="confirm-actions">
+          <button type="button" class="confirm-btn cancel" data-confirm="cancel">
+            <i data-lucide="x"></i>${cancelText}
+          </button>
+          <button type="button" class="confirm-btn danger" data-confirm="ok">
+            <i data-lucide="trash-2"></i>${confirmText}
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    lucide.createIcons?.();
+
+    const cleanup = (result) => {
+      overlay.classList.remove('show');
+      document.removeEventListener('keydown', onKey);
+      setTimeout(() => overlay.remove(), 200);
+      resolve(result);
+    };
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') cleanup(false);
+      if (e.key === 'Enter') cleanup(true);
+    };
+
+    document.addEventListener('keydown', onKey);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cleanup(false);
+    });
+
+    overlay.querySelector('[data-confirm="cancel"]')?.addEventListener('click', () => cleanup(false));
+    overlay.querySelector('[data-confirm="ok"]')?.addEventListener('click', () => cleanup(true));
+  });
 };
 const saveFavs = () => localStorage.setItem('favorites', JSON.stringify(state.favorites));
 
@@ -212,12 +266,25 @@ async function getFavorites() {
 }
 
 async function addFavorite(place) {
+  // Guard: avoid sending very long data-URIs (SVG placeholders) or huge strings to the server
+  let photo = place.photo || null;
+  try {
+    if(photo && (typeof photo === 'string')) {
+      // If it's a data URI (inline SVG/base64), don't send it to DB — use null so server stores nothing
+      if(photo.startsWith('data:')) photo = null;
+      // If it's unexpectedly long, drop it as well (DB column limits)
+      if(photo && photo.length > 1000) photo = null;
+    }
+  } catch(e) {
+    photo = null;
+  }
+
   return await apiRequest('/favorites', {
     method: 'POST',
     body: JSON.stringify({
       place_id: place.place_id || place.id,
       place_name: place.name,
-      place_photo: place.photo || null,
+      place_photo: photo,
       place_rating: place.rating || null,
       place_vicinity: place.vicinity || place.formatted_address || null,
       geometry: place.geometry || null
@@ -500,7 +567,27 @@ function afterMapTabMount(){
   }
 
   // Підключаємо карту до DOM (повторний attach)
-  if(state.map){ google.maps.event.trigger(state.map,'resize'); }
+  const mapEl = $('#map');
+  if(mapEl) {
+    try {
+      // Якщо карта ще не створена або її контейнер змінився (рендер перезаписав DOM),
+      // створюємо новий екземпляр карти і перемальовуємо маркери
+      if(!state.map || (state.map.getDiv && state.map.getDiv() !== mapEl)) {
+        state.map = new google.maps.Map(mapEl, {
+          center: state.userPos,
+          zoom: 14,
+          styles:[{featureType:'poi',elementType:'labels',stylers:[{visibility:'off'}]}]
+        });
+        // Перемальовуємо маркер користувача і маркери місць для нового екземпляра карти
+        try { drawUserMarker(); } catch(e){ console.warn('drawUserMarker failed:', e); }
+        try { drawPlaceMarkers(state.places || []); } catch(e){ console.warn('drawPlaceMarkers failed:', e); }
+      } else {
+        google.maps.event.trigger(state.map,'resize');
+      }
+    } catch(e) {
+      console.warn('Помилка підключення карти до DOM:', e);
+    }
+  }
 
   // Контроли карти
   $('#recenter')?.addEventListener('click', ()=> state.map && state.userPos && state.map.setCenter(state.userPos));
@@ -1313,12 +1400,24 @@ function reviewCardHTML(review) {
   const likesCount = review.likes_count || 0;
   const isLiked = review.is_liked || false;
   
+  // Try to get place photo from cached place details
+  let placeImg = '';
+  if(review.place_id && state.placeDetails[review.place_id]?.data) {
+    try {
+      placeImg = placePhoto(state.placeDetails[review.place_id].data, 300);
+    } catch(e) {
+      placeImg = placeholderImg();
+    }
+  } else {
+    placeImg = placeholderImg();
+  }
+
   return `
     <div class="review-card" data-review-id="${review.id}">
       <div class="review-header">
         <div class="review-user">
           <div class="review-avatar-icon-small">
-            <i data-lucide="coffee" style="width:40px;height:40px"></i>
+            <i data-lucide="coffee" style="width:28px;height:28px"></i>
           </div>
           <div>
             <div class="review-user-name">${review.user?.name || 'Користувач'}</div>
@@ -1333,6 +1432,7 @@ function reviewCardHTML(review) {
         </div>
       </div>
       <div class="review-place">
+        <img class="review-place-photo" src="${placeImg}" alt="Фото закладу" />
         <i data-lucide="map-pin" style="width:16px;height:16px"></i>
         <span>${review.place_name || 'Кав\'ярня'}</span>
         ${review.place_id ? `
@@ -1489,6 +1589,21 @@ async function loadAllReviews() {
       listEl.innerHTML = reviews.map(review => reviewCardHTML(review)).join('');
       lucide.createIcons();
       bindReviewActions();
+      // Fetch place details (photos) for reviews if missing, then refresh once
+      const missing = [...new Set(reviews.filter(r => r.place_id).map(r => r.place_id))]
+        .filter(pid => !state.placeDetails[pid]);
+      if(missing.length > 0 && state.map) {
+        let done = 0;
+        missing.forEach(pid => {
+          fetchPlaceDetails(pid, () => {
+            done++;
+            if(done === missing.length) {
+              // Re-render reviews to show photos
+              loadAllReviews();
+            }
+          });
+        });
+      }
     }
   } catch(error) {
     console.error('Помилка завантаження відгуків:', error);
@@ -1537,7 +1652,8 @@ function bindReviewActions() {
         const data = await getReviews();
         const review = data.reviews?.find(r => r.id == reviewId);
         if(review) {
-          showReviewForm(null, review);
+          const reviewPlace = review.place_id ? { place_id: review.place_id, name: review.place_name } : null;
+          showReviewForm(reviewPlace, review);
         }
       } catch(error) {
         showToast(`❌ ${error.message || 'Помилка завантаження відгуку'}`);
@@ -1549,14 +1665,18 @@ function bindReviewActions() {
   $$('[data-delete-review]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const reviewId = btn.getAttribute('data-delete-review');
-      if(confirm('Ви впевнені, що хочете видалити цей відгук?')) {
-        try {
-          await deleteReview(reviewId);
-          showToast('✅ Відгук видалено');
-          loadAllReviews();
-        } catch(error) {
-          showToast(`❌ ${error.message || 'Помилка видалення відгуку'}`);
-        }
+      const confirmed = await confirmDialog(
+        'Цю дію не можна скасувати, але ви зможете залишити новий відгук пізніше.',
+        { title: 'Видалити відгук?', confirmText: 'Видалити', cancelText: 'Скасувати', icon: 'trash-2' }
+      );
+      if(!confirmed) return;
+
+      try {
+        await deleteReview(reviewId);
+        showToast('✅ Відгук видалено');
+        loadAllReviews();
+      } catch(error) {
+        showToast(`❌ ${error.message || 'Помилка видалення відгуку'}`);
       }
     });
   });
@@ -2700,7 +2820,7 @@ function fetchPlaceDetails(placeId, callback) {
   const service = new google.maps.places.PlacesService(state.map);
   service.getDetails({
     placeId: placeId,
-    fields: ['website', 'formatted_phone_number', 'international_phone_number', 'url', 'name', 'formatted_address', 'opening_hours']
+    fields: ['website', 'formatted_phone_number', 'international_phone_number', 'url', 'name', 'formatted_address', 'opening_hours', 'photos']
   }, (place, status) => {
     if(status === google.maps.places.PlacesServiceStatus.OK && place) {
       state.placeDetails[placeId] = {

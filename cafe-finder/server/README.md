@@ -13,7 +13,7 @@ npm install
 DB_HOST=localhost
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
-DB_NAME=cafe_finder
+DB_NAME=cafefinder
 JWT_SECRET=your-secret-key-change-in-production
 PORT=3001
 UPLOAD_DIR=uploads
